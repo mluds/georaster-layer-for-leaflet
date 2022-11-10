@@ -853,7 +853,7 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
 
   getColor: function (values: number[]): string | undefined {
     if (this.options.pixelValuesToColorFn) {
-      return this.options.pixelValuesToColorFn(values);
+      return this.options.pixelValuesToColorFn(values, this.currentStats);
     } else {
       const numberOfValues = values.length;
       const haveDataForAllBands = values.every(value => value !== undefined && value !== this.noDataValue);
