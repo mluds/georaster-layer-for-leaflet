@@ -31,6 +31,10 @@ interface GeoRasterLayerOptions_CommonOptions extends GridLayerOptions {
   updateWhenZooming?: boolean; // inherited from LeafletJS
   keepBuffer?: number; // inherited from LeafletJS
   caching?: boolean;
+  rasterIndex?: number;
+  noDataValue?: number;
+  minValues?: number[];
+  maxValues?: number[];
 }
 
 // Ensures at least one of the georaster[s] options is defined while being ok the other is not

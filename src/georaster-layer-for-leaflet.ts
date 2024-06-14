@@ -30,6 +30,9 @@ const PROJ4_SUPPORTED_PROJECTIONS = new Set([3785, 3857, 4269, 4326, 900913, 102
 const MAX_NORTHING = 1000;
 const MAX_EASTING = 1000;
 const ORIGIN: LatLngTuple = [0, 0];
+const RGB_MIN = 0;
+const RGB_MAX = 255;
+const YCBCR_INTERP = 6;
 
 const log = (obj: any) => console.log("[georaster-layer-for-leaflet] ", obj);
 
@@ -51,6 +54,12 @@ if (!L)
 
 const zip = (a: any[], b: any[]) => a.map((it, i) => [it, b[i]]);
 
+function generateUniqueId() {
+  const timestamp = Date.now(); // Get the current timestamp in milliseconds
+  const randomNum = Math.floor(Math.random() * 1000000); // Generate a random number between 0 and 999999
+  return `${timestamp}_${randomNum}`; // Combine the timestamp and random number to create a unique ID
+}
+
 const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.Class = L.GridLayer.extend({
   options: {
     updateWhenIdle: true,
@@ -58,12 +67,19 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
     keepBuffer: 25,
     resolution: 2 ** 5,
     debugLevel: 0,
-    caching: true
+    caching: true,
+    minValues: [0],
+    maxValues: [255]
   },
 
   cache: {},
 
   initialize: function (options: GeoRasterLayerOptions) {
+
+    this.rasterIndex = options.rasterIndex;
+    this.minValues = options.minValues ?? this.options.minValues;
+    this.maxValues = options.maxValues ?? this.options.maxValues;
+
     try {
       if (options.georasters) {
         this.georasters = options.georasters;
@@ -114,6 +130,8 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
           this[key] = this.georasters[0][key];
         });
       }
+
+      if (options.noDataValue) this.noDataValue = options.noDataValue;
 
       this._cache = {
         innerTile: {},
@@ -168,7 +186,7 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
       this.tileHeight = tileSize.y;
       this.tileWidth = tileSize.x;
 
-      if (this.georasters.length >= 4 && !options.pixelValuesToColorFn) {
+      if (this.georasters.length >= 4 && !options.pixelValuesToColorFn && !options.rasterIndex) {
         throw "you must pass in a pixelValuesToColorFn if you are combining rasters";
       }
 
@@ -182,52 +200,12 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
         maxs: new Array(this.numBands),
         ranges: new Array(this.numBands)
       };
-
-      // using single-band raster as grayscale
-      // or mapping 2 or 3 rasters to rgb bands
-      if (
-        [1, 2, 3].includes(this.georasters.length) &&
-        this.georasters.every((g: GeoRaster) => g.sourceType === "url") &&
-        this.georasters.every((g: GeoRaster) => g.numberOfRasters === 1) &&
-        !options.pixelValuesToColorFn
-      ) {
-        try {
-          this.calcStats = true;
-          this._dynamic = true;
-          this.options.pixelValuesToColorFn = (values: number[]) => {
-            const haveDataForAllBands = values.every(value => value !== undefined && value !== this.noDataValue);
-            if (haveDataForAllBands) {
-              return this.rawToRgb(values);
-            }
-          };
-        } catch (error) {
-          console.error("[georaster-layer-for-leaflet]", error);
-        }
-      }
-
-      // if you haven't specified a pixelValuesToColorFn
-      // and the image is YCbCr, add a function to convert YCbCr
-      this.checkIfYCbCr = new Promise(async resolve => {
-        if (this.options.pixelValuesToColorFn) return resolve(true);
-        if (this.georasters.length === 1 && this.georasters[0].numberOfRasters === 3) {
-          const image = await this.georasters[0]._geotiff?.getImage();
-          if (image?.fileDirectory?.PhotometricInterpretation === 6) {
-            this.options.pixelValuesToColorFn = (values: number[]) => {
-              const r = Math.round(values[0] + 1.402 * (values[2] - 0x80));
-              const g = Math.round(values[0] - 0.34414 * (values[1] - 0x80) - 0.71414 * (values[2] - 0x80));
-              const b = Math.round(values[0] + 1.772 * (values[1] - 0x80));
-              return `rgb(${r},${g},${b})`;
-            };
-          }
-        }
-        return resolve(true);
-      });
     } catch (error) {
       console.error("ERROR initializing GeoTIFFLayer", error);
     }
   },
 
-  onAdd: function (map) {
+  onAdd: function (map: any) {
     if (!this.options.maxZoom) {
       // maxZoom is needed to display the tiles in the correct order over the zIndex between the zoom levels
       // https://github.com/Leaflet/Leaflet/blob/2592967aa6bd392db0db9e58dab840054e2aa291/src/layer/tile/GridLayer.js#L375C21-L375C21
@@ -348,6 +326,7 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
     };
 
     if (this.options.caching && this.cache[key]) {
+      if (this.debugLevel >= 2) console.log(`cache hit for tile ${key}`);
       done(undefined, this.cache[key]);
       return this.cache[key];
     } else {
@@ -444,11 +423,11 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
         // pad xmax and ymin of container to tolerate ceil() and floor() in snap()
         container: inSimpleCRS
           ? [
-              extentOfLayer.xmin,
-              extentOfLayer.ymin - 0.25 * pixelHeight,
-              extentOfLayer.xmax + 0.25 * pixelWidth,
-              extentOfLayer.ymax
-            ]
+            extentOfLayer.xmin,
+            extentOfLayer.ymin - 0.25 * pixelHeight,
+            extentOfLayer.xmax + 0.25 * pixelWidth,
+            extentOfLayer.ymax
+          ]
           : [xmin, ymin - 0.25 * pixelHeight, xmax + 0.25 * pixelWidth, ymax],
         debug: debugLevel >= 2,
         origin: inSimpleCRS ? [extentOfLayer.xmin, extentOfLayer.ymax] : [xmin, ymax],
@@ -598,6 +577,13 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
 
       // render asynchronously so tiles show up as they finish instead of all at once (which blocks the UI)
       setTimeout(async () => {
+        let timerId;
+        if (debugLevel >= 2) {
+          timerId = generateUniqueId();
+          console.time(timerId);
+        }
+        const imageData = new ImageData(tileSize.x, tileSize.y);
+        const data = imageData.data;
         try {
           let tileRasters: number[][][] | null = null;
           if (!rasters) {
@@ -653,83 +639,100 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
             }
           }
 
-          await this.checkIfYCbCr;
+          if (this.isYCbCr === undefined) {
+            const image = await this.georasters[0]._geotiff?.getImage();
+            this.isYCbCr = image?.fileDirectory?.PhotometricInterpretation === YCBCR_INTERP;
+          }
 
           for (let h = 0; h < numberOfSamplesDown; h++) {
-            const yCenterInMapPixels = yTopOfInnerTile + (h + 0.5) * heightOfSampleInScreenPixels;
-            const latWestPoint = L.point(xLeftOfInnerTile, yCenterInMapPixels);
-            const { lat } = map.unproject(latWestPoint, zoom);
-            if (lat > yMinOfLayer && lat < yMaxOfLayer) {
-              const yInTilePixels = Math.round(h * heightOfSampleInScreenPixels) + Math.min(padding.top, 0);
+            const yInTilePixels = Math.round(h * heightOfSampleInScreenPixels) + Math.min(padding.top, 0);
 
-              let yInRasterPixels = 0;
-              if (inSimpleCRS || this.projection === EPSG4326) {
-                yInRasterPixels = Math.floor((yMaxOfLayer - lat) / pixelHeight);
+            for (let w = 0; w < numberOfSamplesAcross; w++) {
+              let values = null;
+              if (tileRasters) {
+                // get value from array specific to this tile
+                values = tileRasters.map(band => band[h][w]);
+              } else {
+                done && done(Error("no rasters are available for, so skipping value generation"));
+                return;
               }
 
-              for (let w = 0; w < numberOfSamplesAcross; w++) {
-                const latLngPoint = L.point(
-                  xLeftOfInnerTile + (w + 0.5) * widthOfSampleInScreenPixels,
-                  yCenterInMapPixels
-                );
-                const { lng: xOfLayer } = map.unproject(latLngPoint, zoom);
-                if (xOfLayer > xMinOfLayer && xOfLayer < xMaxOfLayer) {
-                  let xInRasterPixels = 0;
-                  if (inSimpleCRS || this.projection === EPSG4326) {
-                    xInRasterPixels = Math.floor((xOfLayer - xMinOfLayer) / pixelWidth);
-                  } else if (this.getProjector()) {
-                    const inverted = this.getProjector().inverse({ x: xOfLayer, y: lat });
-                    const yInSrc = inverted.y;
-                    yInRasterPixels = Math.floor((ymax - yInSrc) / pixelHeight);
-                    if (yInRasterPixels < 0 || yInRasterPixels >= rasterHeight) continue;
+              // x-axis coordinate of the starting point of the rectangle representing the raster pixel
+              const x = Math.round(w * widthOfSampleInScreenPixels) + Math.min(padding.left, 0);
 
-                    const xInSrc = inverted.x;
-                    xInRasterPixels = Math.floor((xInSrc - xmin) / pixelWidth);
-                    if (xInRasterPixels < 0 || xInRasterPixels >= rasterWidth) continue;
+              // y-axis coordinate of the starting point of the rectangle representing the raster pixel
+              const y = yInTilePixels;
+
+              // how many real screen pixels does a pixel of the sampled raster take up
+              const width = widthOfSampleInScreenPixelsInt;
+              const height = heightOfSampleInScreenPixelsInt;
+
+              if (this.options.customDrawFunction) {
+                this.options.customDrawFunction({
+                  values,
+                  context,
+                  x,
+                  y,
+                  width,
+                  height,
+                  sampleX: w,
+                  sampleY: h,
+                  sampledRaster: tileRasters
+                });
+              } else {
+                let r;
+                let g;
+                let b;
+                let a = 255;
+                if (this.options.pixelValuesToColorFn) {
+                  [r, g, b, a] = this.options.pixelValuesToColorFn(values);
+                } else {
+                  const numberOfValues = values.length;
+                  let haveDataForAllBands = true;
+                  for (const value of values) {
+                    if (value === undefined || value === this.noDataValue) {
+                      haveDataForAllBands = false;
+                      break;
+                    }
                   }
-                  let values = null;
-                  if (tileRasters) {
-                    // get value from array specific to this tile
-                    values = tileRasters.map(band => band[h][w]);
-                  } else if (rasters) {
-                    // get value from array with data for entire raster
-                    values = rasters.map((band: number[][]) => {
-                      return band[yInRasterPixels][xInRasterPixels];
-                    });
-                  } else {
-                    done && done(Error("no rasters are available for, so skipping value generation"));
-                    return;
+                  if (haveDataForAllBands) {
+                    if (numberOfValues === 1 || this.rasterIndex !== undefined) {
+                      const value = values[this.rasterIndex ?? 0];
+                      const normValue = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((value - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));
+                      r = normValue;
+                      g = normValue;
+                      b = normValue;
+                    } else if (numberOfValues === 2) {
+                      r = values[0];
+                      g = values[1];
+                      b = 0;
+                    } else if (numberOfValues === 3) {
+                      r = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((values[0] - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));
+                      g = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((values[1] - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));;
+                      b = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((values[2] - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));;
+                      if (this.isYCbCr) {
+                        const [rOld, gOld, bOld] = [r, g, b];
+                        r = Math.round(rOld + 1.402 * (bOld - 0x80));
+                        g = Math.round(rOld - 0.34414 * (gOld - 0x80) - 0.71414 * (bOld - 0x80));
+                        b = Math.round(rOld + 1.772 * (gOld - 0x80));
+                      }
+                    } else if (numberOfValues === 4) {
+                      r = values[0];
+                      g = values[1];
+                      b = values[2];
+                      a = values[3] / 255;
+                    }
                   }
+                }
 
-                  // x-axis coordinate of the starting point of the rectangle representing the raster pixel
-                  const x = Math.round(w * widthOfSampleInScreenPixels) + Math.min(padding.left, 0);
-
-                  // y-axis coordinate of the starting point of the rectangle representing the raster pixel
-                  const y = yInTilePixels;
-
-                  // how many real screen pixels does a pixel of the sampled raster take up
-                  const width = widthOfSampleInScreenPixelsInt;
-                  const height = heightOfSampleInScreenPixelsInt;
-
-                  if (this.options.customDrawFunction) {
-                    this.options.customDrawFunction({
-                      values,
-                      context,
-                      x,
-                      y,
-                      width,
-                      height,
-                      rasterX: xInRasterPixels,
-                      rasterY: yInRasterPixels,
-                      sampleX: w,
-                      sampleY: h,
-                      sampledRaster: tileRasters
-                    });
-                  } else {
-                    const color = this.getColor(values);
-                    if (color && context) {
-                      context.fillStyle = color;
-                      context.fillRect(x, y, width, height);
+                if (r !== undefined && g !== undefined && b !== undefined && a !== undefined) {
+                  for (let dy = 0; dy < height; dy++) {
+                    for (let dx = 0; dx < width; dx++) {
+                      const index = ((y + dy) * tileSize.x + (x + dx)) * 4;
+                      data[index + 0] = r;
+                      data[index + 1] = g;
+                      data[index + 2] = b;
+                      data[index + 3] = a;
                     }
                   }
                 }
@@ -757,12 +760,14 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
             }
           }
 
+          if (context) context.putImageData(imageData, 0, 0);
           tile.style.visibility = "visible"; // set to default
         } catch (e: any) {
           console.error(e);
           error = e;
         }
         done && done(error, tile);
+        if (this.debugLevel >= 2) console.timeEnd(timerId);
       }, 0);
 
       // return the tile so it can be rendered on screen
@@ -879,37 +884,6 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
     if (layerExtent.overlaps(rightBounds)) return true;
 
     return false;
-  },
-
-  getColor: function (values: number[]): string | undefined {
-    if (this.options.pixelValuesToColorFn) {
-      return this.options.pixelValuesToColorFn(values);
-    } else {
-      const numberOfValues = values.length;
-      const haveDataForAllBands = values.every(value => value !== undefined && value !== this.noDataValue);
-      if (haveDataForAllBands) {
-        if (numberOfValues == 1) {
-          const value = values[0];
-          if (this.palette) {
-            const [r, g, b, a] = this.palette[value];
-            return `rgba(${r},${g},${b},${a / 255})`;
-          } else if (this.georasters[0].mins) {
-            const { mins, ranges } = this.georasters[0];
-            return this.scale((values[0] - mins[0]) / ranges[0]).hex();
-          } else if (this.currentStats.mins) {
-            const min = this.currentStats.mins[0];
-            const range = this.currentStats.ranges[0];
-            return this.scale((values[0] - min) / range).hex();
-          }
-        } else if (numberOfValues === 2) {
-          return `rgb(${values[0]},${values[1]},0)`;
-        } else if (numberOfValues === 3) {
-          return `rgb(${values[0]},${values[1]},${values[2]})`;
-        } else if (numberOfValues === 4) {
-          return `rgba(${values[0]},${values[1]},${values[2]},${values[3] / 255})`;
-        }
-      }
-    }
   },
 
   /**
