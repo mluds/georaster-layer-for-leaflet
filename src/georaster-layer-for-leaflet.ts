@@ -33,6 +33,7 @@ const ORIGIN: LatLngTuple = [0, 0];
 const RGB_MIN = 0;
 const RGB_MAX = 255;
 const YCBCR_INTERP = 6;
+let ID = 0;
 
 const log = (obj: any) => console.log("[georaster-layer-for-leaflet] ", obj);
 
@@ -75,6 +76,9 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
   cache: {},
 
   initialize: function (options: GeoRasterLayerOptions) {
+
+    this.id = ID;
+    ID += 1;
 
     this.rasterIndex = options.rasterIndex;
     this.minValues = options.minValues ?? this.options.minValues;
@@ -315,7 +319,7 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
     const coordsKey = this._tileCoordsToKey(coords);
 
     const resolution = this._getResolution(coords.z);
-    const key = `${coordsKey}:${resolution}`;
+    const key = `${this.id}:${coordsKey}:${resolution}`;
     const doneCb = (error?: Error, tile?: HTMLElement): void => {
       done(error, tile);
 
@@ -368,8 +372,6 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
       const pixelWidth = inSimpleCRS ? extentOfLayer.width / rasterWidth : this.pixelWidth;
       if (debugLevel >= 2) log({ pixelHeight, pixelWidth });
 
-      // these values are used, so we don't try to sample outside of the raster
-      const { xMinOfLayer, xMaxOfLayer, yMinOfLayer, yMaxOfLayer } = this;
       const boundsOfTile = this._tileCoordsToBounds(coords);
       if (debugLevel >= 2) log({ boundsOfTile });
 
@@ -563,7 +565,6 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
       const widthOfSampleInScreenPixels = innerTileWidth / numberOfSamplesAcross;
       const widthOfSampleInScreenPixelsInt = Math.ceil(widthOfSampleInScreenPixels);
 
-      const map = this.getMap();
       const tileSize = this.getTileSize();
 
       // this converts tile coordinates (how many tiles down and right)
