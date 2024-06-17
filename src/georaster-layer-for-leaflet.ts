@@ -708,8 +708,8 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
                       b = 0;
                     } else if (numberOfValues === 3) {
                       r = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((values[0] - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));
-                      g = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((values[1] - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));;
-                      b = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((values[2] - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));;
+                      g = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((values[1] - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));
+                      b = Math.max(RGB_MIN, Math.min(RGB_MAX, Math.round((values[2] - this.minValues[0]) / (this.maxValues[0] - this.minValues[0]) * RGB_MAX)));
                       if (this.isYCbCr) {
                         const [rOld, gOld, bOld] = [r, g, b];
                         r = Math.round(rOld + 1.402 * (bOld - 0x80));
