@@ -324,12 +324,12 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
 
       // caching the rendered tile, to skip the calculation for the next time
       if (!error && this.options.caching) {
-        this.cache[key] = tile;
+        if (!(key in this.cache)) this.cache[key] = tile;
       }
     };
 
     if (this.options.caching && this.cache[key]) {
-      if (this.debugLevel >= 2) console.log(`cache hit for tile ${key}`);
+      if (this.debugLevel >= 2) console.log(`memory cache hit for tile ${key}`);
       done(undefined, this.cache[key]);
       return this.cache[key];
     } else {
