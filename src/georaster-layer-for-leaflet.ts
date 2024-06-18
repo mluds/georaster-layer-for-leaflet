@@ -10,6 +10,7 @@ import type { Coords, DoneCallback, LatLngBounds, LatLngTuple } from "leaflet";
 import proj4FullyLoaded from "proj4-fully-loaded";
 import { GeoExtent } from "geo-extent";
 import snap from "snap-bbox";
+import Dexie, { Table } from "dexie";
 import { v4 as uuidv4 } from "uuid";
 
 import type {
@@ -36,6 +37,25 @@ const RGB_MAX = 255;
 const YCBCR_INTERP = 6;
 
 const log = (obj: any) => console.log("[georaster-layer-for-leaflet] ", obj);
+
+interface CachedTile {
+  id?: number;
+  key: string;
+  tile: string;
+}
+
+class Database extends Dexie {
+  cachedTiles!: Table<CachedTile>;
+
+  constructor() {
+    super("georaster-layer-for-leaflet-cache");
+    this.version(1).stores({
+      cachedTiles: "++id, key"
+    });
+  }
+}
+
+const db = new Database();
 
 // figure out if simple CRS
 // even if not created with same instance of LeafletJS
@@ -323,17 +343,51 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
       done(error, tile);
 
       // caching the rendered tile, to skip the calculation for the next time
-      if (!error && this.options.caching) {
+      if (!error && this.options.caching && tile) {
         if (!(key in this.cache)) this.cache[key] = tile;
+        db.cachedTiles.get({ key }).then(cachedTile => {
+          if (!cachedTile) {
+            db.cachedTiles.put({ key, tile: tile.toDataURL() }).catch(error => {
+              console.error("Error writing tile to cache:", error);
+            });
+          }
+        });
       }
     };
 
-    if (this.options.caching && key in this.cache) {
-      if (this.debugLevel >= 2) console.log(`memory cache hit for tile ${key}`);
-      done(undefined, this.cache[key]);
-      return this.cache[key];
+    const drawTileParams = {
+      tile, coords, context, done: doneCb, resolution
+    };
+
+    if (this.options.caching) {
+      if (key in this.cache) {
+        if (this.debugLevel >= 2) console.log(`memory cache hit for tile ${key}`);
+        done(undefined, this.cache[key]);
+        return this.cache[key];
+      } else {
+        db.cachedTiles.get({ key })
+          .then(cachedTile => {
+            if (cachedTile) {
+              if (this.debugLevel >= 2) console.log(`indexeddb cache hit for tile ${key}`);
+              const img = new Image();
+              img.onload = () => {
+                if (context) context.drawImage(img, 0, 0);
+                tile.style.visibility = "visible";
+              };
+              img.src = cachedTile.tile;
+              this.cache[key] = tile;
+              done(undefined, tile);
+            } else {
+              this.drawTile(drawTileParams);
+            }
+          })
+          .catch(error => {
+            console.error("Error reading tile from cache:", error);
+            this.drawTile(drawTileParams);
+          });
+      }
     } else {
-      this.drawTile({ tile, coords, context, done: doneCb, resolution });
+      this.drawTile(drawTileParams);
     }
 
     return tile;
