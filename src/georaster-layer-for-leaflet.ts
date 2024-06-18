@@ -651,7 +651,11 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
               let values = null;
               if (tileRasters) {
                 // get value from array specific to this tile
-                values = tileRasters.map(band => band[h][w]);
+                values = [];
+                for (let i = 0; i < tileRasters.length; i++) {
+                  const band = tileRasters[i];
+                  values.push(band[h][w]);
+                }
               } else {
                 done && done(Error("no rasters are available for, so skipping value generation"));
                 return;
