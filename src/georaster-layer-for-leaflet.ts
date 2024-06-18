@@ -328,7 +328,7 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
       }
     };
 
-    if (this.options.caching && this.cache[key]) {
+    if (this.options.caching && key in this.cache) {
       if (this.debugLevel >= 2) console.log(`memory cache hit for tile ${key}`);
       done(undefined, this.cache[key]);
       return this.cache[key];
