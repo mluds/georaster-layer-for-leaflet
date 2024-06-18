@@ -10,6 +10,7 @@ import type { Coords, DoneCallback, LatLngBounds, LatLngTuple } from "leaflet";
 import proj4FullyLoaded from "proj4-fully-loaded";
 import { GeoExtent } from "geo-extent";
 import snap from "snap-bbox";
+import { v4 as uuidv4 } from "uuid";
 
 import type {
   CustomCRS,
@@ -33,7 +34,6 @@ const ORIGIN: LatLngTuple = [0, 0];
 const RGB_MIN = 0;
 const RGB_MAX = 255;
 const YCBCR_INTERP = 6;
-let ID = 0;
 
 const log = (obj: any) => console.log("[georaster-layer-for-leaflet] ", obj);
 
@@ -55,12 +55,6 @@ if (!L)
 
 const zip = (a: any[], b: any[]) => a.map((it, i) => [it, b[i]]);
 
-function generateUniqueId() {
-  const timestamp = Date.now(); // Get the current timestamp in milliseconds
-  const randomNum = Math.floor(Math.random() * 1000000); // Generate a random number between 0 and 999999
-  return `${timestamp}_${randomNum}`; // Combine the timestamp and random number to create a unique ID
-}
-
 const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.Class = L.GridLayer.extend({
   options: {
     updateWhenIdle: true,
@@ -76,9 +70,6 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
   cache: {},
 
   initialize: function (options: GeoRasterLayerOptions) {
-
-    this.id = ID;
-    ID += 1;
 
     this.rasterIndex = options.rasterIndex;
     this.minValues = options.minValues ?? this.options.minValues;
@@ -319,8 +310,16 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
     const coordsKey = this._tileCoordsToKey(coords);
 
     const resolution = this._getResolution(coords.z);
-    const key = `${this.id}:${coordsKey}:${resolution}`;
-    const doneCb = (error?: Error, tile?: HTMLElement): void => {
+    const urls: string = this.georasters.reduce((acc: string, val: GeoRaster) => {
+      const url = val._url;
+      if (acc === "") {
+        return url;
+      } else {
+        return `${acc}:${url}`;
+      }
+    }, "");
+    const key = `${urls}:${this.rasterIndex}:${coordsKey}:${resolution}`;
+    const doneCb = (error?: Error, tile?: HTMLCanvasElement): void => {
       done(error, tile);
 
       // caching the rendered tile, to skip the calculation for the next time
@@ -580,7 +579,7 @@ const GeoRasterLayer: (new (options: GeoRasterLayerOptions) => any) & typeof L.C
       setTimeout(async () => {
         let timerId;
         if (debugLevel >= 2) {
-          timerId = generateUniqueId();
+          timerId = uuidv4();
           console.time(timerId);
         }
         const imageData = new ImageData(tileSize.x, tileSize.y);
